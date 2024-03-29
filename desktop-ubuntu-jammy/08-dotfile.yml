@@ -1,0 +1,17 @@
+- hosts: localhost
+  tasks:
+  - name: make config directory
+    ansible.builtin.file:
+      path: "{{ ansible_env.HOME }}/config/dotfile/"
+      state: directory
+      mode: '0755'
+
+  - name: clone dotfile
+    ansible.builtin.git:
+      repo: https://github.com/nanajo/dotfile.git
+      dest: "{{ ansible_env.HOME }}/config/dotfile/"
+  
+  - name: install dotfile
+    ansible.builtin.shell: 
+      cmd: yes | ./install.sh
+      chdir: "{{ ansible_env.HOME }}/config/dotfile/"

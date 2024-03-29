@@ -1,0 +1,54 @@
+- hosts: localhost
+  tasks:
+  - name: Create autorun to load .Xresources
+    ansible.builtin.blockinfile:
+      create: true
+      mode: u=rw,g=rw,o=r
+      path: /tmp/ansible-test
+      block: |
+        [Desktop Entry]
+        Name=Xresources
+        Exec=xrdb -merge {{ ansible_env.HOME}}/.Xresources
+        Terminal=false
+        Type=Application
+        StartupNotify=false
+
+  - name: make tmp directory
+    ansible.builtin.file:
+      path: /tmp/resize-font/
+      state: directory
+      mode: '0755'
+  - name: make tmp directory
+    ansible.builtin.file:
+      path: /tmp/resize-font/
+      state: directory
+      mode: '0755'
+
+  - name: make urxvt script directory
+    ansible.builtin.file:
+      path: "{{ ansible_env.HOME}}/.urxvt/ext/"
+      state: directory
+      mode: '0755'
+
+  - name: clone resize-font
+    ansible.builtin.git:
+      repo: https://github.com/simmel/urxvt-resize-font.git
+      dest: /tmp/resize-font/
+
+  - name: Isntall resize-font
+    ansible.builtin.copy:
+      remote_src: yes
+      src: /tmp/resize-font/resize-font
+      dest: "{{ ansible_env.HOME}}/.urxvt/ext/"
+
+  - name: install urxvt
+    become: yes
+    ansible.builtin.apt:
+      update_cache: yes
+      pkg:
+        rxvt-unicode
+
+  - name: Change urxvt desktop icon
+    become: yes
+    ansible.builtin.shell:
+      cmd: sudo sed -i -e "s/urxvt_48x48\.xpm/org.gnome.Terminal/g" /usr/share/applications/rxvt-unicode.desktop
