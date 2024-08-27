@@ -1,0 +1,19 @@
+# - hosts: localhost
+#   tasks:
+  - name: Install packages for small tools Stage1 (Standard Packages)
+    become: yes
+    ansible.builtin.pacman:
+      pkg:
+        - tmux
+        - bitwarden
+        - virt-manager
+        - wget
+  - name: Install packages for small tools Stage2 (AUR)
+    become: yes
+    become_user: aur_builder
+    kewlfft.aur.aur:
+      use: paru
+      state: present
+      name:
+        - windowmaker
+        - wmdocker

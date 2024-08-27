@@ -1,0 +1,21 @@
+# - hosts: localhost
+#   tasks:
+  - name: get variables
+    ansible.builtin.setup:
+  - name: install docker
+    become: yes
+    ansible.builtin.pacman:
+      update_cache: yes
+      pkg:
+        - docker
+  - name: Enabling docker service
+    become: yes
+    service:
+      name: docker
+      enabled: yes
+  - name: Add user to docker group
+    become: yes
+    ansible.builtin.user:
+      name: "{{ ansible_facts['env']['USER'] }}"
+      append: true
+      groups: docker

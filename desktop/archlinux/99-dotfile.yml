@@ -14,4 +14,4 @@
   - name: install dotfile
     ansible.builtin.shell: 
       cmd: yes | ./install.sh
-      chdir: "{{ ansible_env.HOME }}/config/dotfile/"
+      chdir: "{{ ansible_env.HOME }}/config/dotfile/ArchLinux/"

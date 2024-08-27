@@ -1,0 +1,15 @@
+# - hosts: localhost
+#   tasks:
+  - name: Install packages for Web Browser Stage1 (Standard Packages)
+    become: yes
+    ansible.builtin.pacman:
+      pkg:
+        - firefox
+  - name: Install packages for Web Browser Stage2 (AUR)
+    become: yes
+    become_user: aur_builder
+    kewlfft.aur.aur:
+      use: paru
+      state: present
+      name:
+        - google-chrome

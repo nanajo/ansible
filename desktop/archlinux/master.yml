@@ -1,0 +1,17 @@
+- hosts: localhost
+  tasks:    
+    - name: importing 00-essential_packages.yml
+      include_tasks: 00-essential_packages.yml
+    - name: importing 01-docker.yml
+      include_tasks: 01-docker.yml
+    - name: importing 02-desktop.yml
+      include_tasks: 02-desktop.yml
+    - name: importing 03-small_tools.yml
+      include_tasks: 03-small_tools.yml
+    - name: importing 04-web_browser.yml
+      include_tasks: 04-web_browser.yml
+    - name: importing 05-cloud_storage.yml
+      include_tasks: 05-cloud_storage.yml
+    - name: importing 06-development_tools.yml
+      include_tasks: 06-development_tools.yml
+    

@@ -1,0 +1,10 @@
+# - hosts: localhost
+#   tasks:
+  - name: Install packages for development tools Stage2 (AUR)
+    become: yes
+    become_user: aur_builder
+    kewlfft.aur.aur:
+      use: paru
+      state: present
+      name:
+        - visual-studio-code-bin

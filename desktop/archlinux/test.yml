@@ -1,0 +1,10 @@
+- hosts: localhost
+  tasks:
+  - name: Install packages for desktop environment Stage2 (AUR)
+    become: yes
+    become_user: aur_builder
+    kewlfft.aur.aur:
+      use: makepkg
+      state: present
+      name:
+        - paru

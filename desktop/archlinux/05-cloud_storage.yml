@@ -1,0 +1,5 @@
+# - hosts: localhost
+#   tasks:
+  - name: Install Dropbox
+    ansible.builtin.shell:
+      cmd: curl -s https://linux.dropbox.com/fedora/rpm-public-key.asc | gpg --import --&& paru -S dropbox

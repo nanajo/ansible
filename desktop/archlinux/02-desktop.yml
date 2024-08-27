@@ -1,0 +1,33 @@
+# - hosts: localhost
+#   tasks:
+  - name: Install packages for desktop environment Stage1 (Standard Packages)
+    become: yes
+    ansible.builtin.pacman:
+      pkg:
+        - xorg-server
+        - xorg-xclock
+        - xorg-xrandr
+        - xorg-xdm
+        - xorg-xmodmap
+        - fcitx5
+        - fcitx5-mozc
+        - fcitx5-config-qt
+        - fcitx5-gtk
+        - pipewire-pulse
+        - pavucontrol
+        - volumeicon
+        - x11-ssh-askpass
+        - thunar
+        - qemu-guest-agent
+        - spice-vdagent
+        - alacritty
+  - name: Install packages for desktop environment Stage2 (AUR)
+    become: yes
+    become_user: aur_builder
+    kewlfft.aur.aur:
+      use: paru
+      state: present
+      update_cache: yes
+      name:
+        - windowmaker
+        - wmdocker

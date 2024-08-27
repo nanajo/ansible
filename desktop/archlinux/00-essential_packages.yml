@@ -1,0 +1,39 @@
+- name: install essential packages
+  become: yes
+  ansible.builtin.pacman:
+    update_cache: yes
+    pkg:
+      - git
+      - vim
+      - debugedit
+      - fakeroot
+      - pkg-config
+      - patch
+      - rust
+      - make
+      - nftables
+
+- name: Create the `aur_builder` user as ansible aur building user
+  become: yes
+  ansible.builtin.user:
+    name: aur_builder
+    create_home: yes
+    group: wheel
+
+- name: Allow the `aur_builder` user to run `sudo pacman` without a password
+  become: yes
+  ansible.builtin.lineinfile:
+    path: /etc/sudoers.d/11-install-aur_builder
+    line: 'aur_builder ALL=(ALL) NOPASSWD: /usr/bin/pacman'
+    create: yes
+    mode: 0644
+    validate: 'visudo -cf %s'
+
+- name: Install packages for desktop environment Stage2 (AUR)
+  become: yes
+  become_user: aur_builder
+  kewlfft.aur.aur:
+    use: makepkg
+    state: present
+    name:
+      - paru
