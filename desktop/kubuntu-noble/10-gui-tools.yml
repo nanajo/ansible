@@ -1,0 +1,15 @@
+- hosts: localhost
+  tasks:
+  - name: install tools for GUI packages from apt
+    become: yes
+    ansible.builtin.apt:
+      update_cache: yes
+      pkg:
+        - vlc
+
+  - name: install tools for GUI packages from snap
+    become: yes
+    snap:
+      name:
+        - discord
+        - bitwarden
