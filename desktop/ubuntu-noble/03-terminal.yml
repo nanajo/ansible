@@ -1,0 +1,20 @@
+- hosts: localhost
+  tasks:
+  - name: install alacritty via cargo
+    community.general.cargo:
+      name: alacritty
+      executable: "$HOME/.cargo/bin/cargo"
+
+  - name: Add shortcut system menu
+    copy:
+      dest: "{{ ansible_env.HOME }}/.local/share/applications/alacritty.desktop"
+      content: |
+        [Desktop Entry]
+        Version=1.0
+        Type=Application
+        Name=Alacritty
+        Comment=Alacritty - A fat, cross-platform, OpenGL terminal emulator.
+        Exec=/home/shichijo/.cargo/bin/alacritty
+        Terminal=false
+        Icon=utilities-terminal
+        Categories=System;

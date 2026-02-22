@@ -1,0 +1,22 @@
+- hosts: localhost
+  tasks:
+  - name: Add VSCode repository key
+    become: yes
+    ansible.builtin.get_url:
+      url: "https://packages.microsoft.com/keys/microsoft.asc"
+      dest: /etc/apt/trusted.gpg.d/microsoft.asc
+      mode: '0644'
+      force: true
+
+
+  - name: Add VSCode official repository
+    become: yes
+    ansible.builtin.apt_repository: 
+      repo: "deb [arch=amd64] https://packages.microsoft.com/repos/code stable main"
+
+  - name: Install VSCocde
+    become: yes
+    ansible.builtin.apt:
+      update_cache: yes
+      pkg:
+        - code

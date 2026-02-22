@@ -1,0 +1,19 @@
+- hosts: localhost
+  tasks:
+  - name: Swap Ctrl and Caps
+    become: yes
+    ansible.builtin.blockinfile:
+      create: true
+      mode: u=rw,g=rw,o=r
+      path: /etc/default/keyboard
+      block: |
+        # KEYBOARD CONFIGURATION FILE
+
+        # Consult the keyboard(5) manual page.
+
+        XKBMODEL="pc105"
+        XKBLAYOUT="us"
+        XKBVARIANT=""
+        XKBOPTIONS="ctrl:nocaps"
+
+        BACKSPACE="guess"
