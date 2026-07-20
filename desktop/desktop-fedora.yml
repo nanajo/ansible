@@ -1,0 +1,721 @@
+---
+# 実行例: ansible-playbook -i 'target-host,' --private-key ~/.ssh/privkey -u username -K desktop-fedora.yml
+- name: Set up a personal Fedora 44 Workstation
+  hosts: all
+  gather_facts: true
+
+  vars:
+    workstation_user: "{{ ansible_user_id }}"
+    workstation_home: "{{ ansible_env.HOME }}"
+    user_session_environment:
+      XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/{{ ansible_user_uid }}/bus"
+
+  pre_tasks:
+    - name: Verify that the target is Fedora 44
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Fedora"
+          - ansible_distribution_major_version == "44"
+        fail_msg: This playbook supports Fedora 44 only.
+
+  tasks:
+    # Base system setup
+    - name: Allow the workstation user to use sudo without a password
+      become: true
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ workstation_user }}"
+        content: "{{ workstation_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+    # Input environment: Caps Lock
+    - name: Read the current GNOME XKB options
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - get
+          - org.gnome.desktop.input-sources
+          - xkb-options
+      environment: "{{ user_session_environment }}"
+      register: current_xkb_options_command
+      changed_when: false
+
+    - name: Record the current GNOME XKB options
+      ansible.builtin.set_fact:
+        current_xkb_options: >-
+          {{ current_xkb_options_command.stdout
+             | regex_replace('^@as ', '')
+             | from_yaml }}
+
+    - name: Make Caps Lock act as Ctrl in GNOME
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - set
+          - org.gnome.desktop.input-sources
+          - xkb-options
+          - "{{ (current_xkb_options + ['caps:ctrl_modifier']) | unique | list | to_json }}"
+      environment: "{{ user_session_environment }}"
+      when: "'caps:ctrl_modifier' not in current_xkb_options"
+
+    # Input environment: Japanese input
+    - name: Install the Japanese input packages
+      become: true
+      ansible.builtin.dnf:
+        name:
+          - fcitx5-autostart
+          - fcitx5-mozc
+        state: present
+
+    - name: Create the environment.d directory for fcitx5
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.config/environment.d"
+        state: directory
+        mode: "0755"
+
+    - name: Configure the fcitx5 environment
+      ansible.builtin.copy:
+        dest: "{{ workstation_home }}/.config/environment.d/fcitx5.conf"
+        content: |
+          XMODIFIERS=@im=fcitx
+          QT_IM_MODULE=fcitx
+          QT_IM_MODULES=wayland;fcitx
+        mode: "0644"
+
+    # GNOME extension manager
+    - name: Read the user Flatpak remotes for Extension Manager
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - remotes
+          - --user
+          - --columns=name
+      register: extension_manager_flatpak_remotes
+      changed_when: false
+
+    - name: Add Flathub for Extension Manager
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - remote-add
+          - --user
+          - --if-not-exists
+          - flathub
+          - https://flathub.org/repo/flathub.flatpakrepo
+      when: "'flathub' not in extension_manager_flatpak_remotes.stdout_lines"
+
+    - name: Check whether Extension Manager is installed
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - info
+          - --user
+          - com.mattjakeman.ExtensionManager
+      register: extension_manager_flatpak_info
+      changed_when: false
+      failed_when: false
+
+    - name: Install Extension Manager from Flathub
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - install
+          - --user
+          - --noninteractive
+          - flathub
+          - com.mattjakeman.ExtensionManager
+      when: extension_manager_flatpak_info.rc != 0
+
+    # GNOME extension: Kimpanel
+    - name: Read the GNOME Shell version for extension selection
+      ansible.builtin.command:
+        argv:
+          - gnome-shell
+          - --version
+      register: gnome_shell_version_command
+      changed_when: false
+
+    - name: Record the GNOME Shell major version
+      ansible.builtin.set_fact:
+        gnome_shell_major_version: >-
+          {{ gnome_shell_version_command.stdout
+             | regex_search('[0-9]+') }}
+
+    - name: Get compatible Kimpanel extension information
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - "https://extensions.gnome.org/extension-info/?pk=261&shell_version={{ gnome_shell_major_version }}"
+      register: kimpanel_extension_information
+      changed_when: false
+
+    - name: Check whether Kimpanel is installed
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.local/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json"
+      register: kimpanel_extension_before_install
+
+    - name: Download the compatible Kimpanel extension bundle
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --location
+          - --output
+          - /tmp/kimpanel.shell-extension.zip
+          - "https://extensions.gnome.org{{ (kimpanel_extension_information.stdout | from_json).download_url }}"
+      when: not kimpanel_extension_before_install.stat.exists
+
+    - name: Install Kimpanel with the GNOME extension installer
+      ansible.builtin.command:
+        argv:
+          - gnome-extensions
+          - install
+          - /tmp/kimpanel.shell-extension.zip
+      environment: "{{ user_session_environment }}"
+      when: not kimpanel_extension_before_install.stat.exists
+
+    - name: Remove the downloaded Kimpanel extension bundle
+      ansible.builtin.file:
+        path: /tmp/kimpanel.shell-extension.zip
+        state: absent
+
+    - name: Read the enabled extensions before enabling Kimpanel
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - get
+          - org.gnome.shell
+          - enabled-extensions
+      environment: "{{ user_session_environment }}"
+      register: enabled_extensions_before_kimpanel
+      changed_when: false
+
+    - name: Record the enabled extensions before enabling Kimpanel
+      ansible.builtin.set_fact:
+        enabled_extensions_for_kimpanel: >-
+          {{ enabled_extensions_before_kimpanel.stdout
+             | regex_replace('^@as ', '')
+             | from_yaml }}
+
+    - name: Enable Kimpanel in the GNOME settings
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - set
+          - org.gnome.shell
+          - enabled-extensions
+          - "{{ (enabled_extensions_for_kimpanel + ['kimpanel@kde.org']) | unique | list | to_json }}"
+      environment: "{{ user_session_environment }}"
+      when: "'kimpanel@kde.org' not in enabled_extensions_for_kimpanel"
+
+    # GNOME extension: WinTile
+    - name: Get compatible WinTile extension information
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - "https://extensions.gnome.org/extension-info/?pk=1723&shell_version={{ gnome_shell_major_version }}"
+      register: wintile_extension_information
+      changed_when: false
+
+    - name: Check whether WinTile is installed
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.local/share/gnome-shell/extensions/wintile@nowsci.com/metadata.json"
+      register: wintile_extension_before_install
+
+    - name: Download the compatible WinTile extension bundle
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --location
+          - --output
+          - /tmp/wintile.shell-extension.zip
+          - "https://extensions.gnome.org{{ (wintile_extension_information.stdout | from_json).download_url }}"
+      when: not wintile_extension_before_install.stat.exists
+
+    - name: Install WinTile with the GNOME extension installer
+      ansible.builtin.command:
+        argv:
+          - gnome-extensions
+          - install
+          - /tmp/wintile.shell-extension.zip
+      environment: "{{ user_session_environment }}"
+      when: not wintile_extension_before_install.stat.exists
+
+    - name: Remove the downloaded WinTile extension bundle
+      ansible.builtin.file:
+        path: /tmp/wintile.shell-extension.zip
+        state: absent
+
+    - name: Read the enabled extensions before enabling WinTile
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - get
+          - org.gnome.shell
+          - enabled-extensions
+      environment: "{{ user_session_environment }}"
+      register: enabled_extensions_before_wintile
+      changed_when: false
+
+    - name: Record the enabled extensions before enabling WinTile
+      ansible.builtin.set_fact:
+        enabled_extensions_for_wintile: >-
+          {{ enabled_extensions_before_wintile.stdout
+             | regex_replace('^@as ', '')
+             | from_yaml }}
+
+    - name: Enable WinTile in the GNOME settings
+      ansible.builtin.command:
+        argv:
+          - gsettings
+          - set
+          - org.gnome.shell
+          - enabled-extensions
+          - "{{ (enabled_extensions_for_wintile + ['wintile@nowsci.com']) | unique | list | to_json }}"
+      environment: "{{ user_session_environment }}"
+      when: "'wintile@nowsci.com' not in enabled_extensions_for_wintile"
+
+    # Dotfiles and personal tools
+    - name: Create the personal repository directory
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.local/myrepo"
+        state: directory
+        mode: "0755"
+
+    - name: Clone the dotfile repository without updating an existing clone
+      ansible.builtin.git:
+        repo: https://github.com/nanajo/dotfile.git
+        dest: "{{ workstation_home }}/.local/myrepo/dotfile"
+        update: false
+
+    - name: Clone the tools repository without updating an existing clone
+      ansible.builtin.git:
+        repo: https://github.com/nanajo/tools.git
+        dest: "{{ workstation_home }}/.local/myrepo/tools"
+        update: false
+
+    - name: Create the personal command directory
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.local/bin"
+        state: directory
+        mode: "0755"
+
+    - name: Find commands in the tools repository
+      ansible.builtin.find:
+        paths: "{{ workstation_home }}/.local/myrepo/tools"
+        file_type: file
+        recurse: false
+        hidden: true
+      register: personal_tool_commands
+
+    - name: Link commands from the tools repository
+      ansible.builtin.file:
+        src: "{{ item.path }}"
+        dest: "{{ workstation_home }}/.local/bin/{{ item.path | basename }}"
+        state: link
+      loop: "{{ personal_tool_commands.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Create the dotfile backup directory
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.local/dotfile_backup"
+        state: directory
+        mode: "0700"
+
+    - name: Find files at the root of the dotfile repository
+      ansible.builtin.find:
+        paths: "{{ workstation_home }}/.local/myrepo/dotfile"
+        file_type: file
+        recurse: false
+        hidden: true
+      register: dotfile_home_files
+
+    - name: Inspect existing home dotfiles
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/{{ item.path | basename }}"
+        follow: false
+      loop: "{{ dotfile_home_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: dotfile_home_destinations
+
+    - name: Inspect backups for existing home dotfiles
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.local/dotfile_backup/{{ item.item.path | basename }}"
+        follow: false
+      loop: "{{ dotfile_home_destinations.results }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+      register: dotfile_home_backups
+
+    - name: Refuse to overwrite an existing home dotfile backup
+      ansible.builtin.fail:
+        msg: >-
+          Cannot back up {{ workstation_home }}/{{ item.item.item.path | basename }}:
+          {{ workstation_home }}/.local/dotfile_backup/{{ item.item.item.path | basename }}
+          already exists.
+      when:
+        - item.item.stat.exists
+        - not (item.item.stat.islnk | default(false) and item.item.stat.lnk_source == item.item.item.path)
+        - item.stat.exists
+      loop: "{{ dotfile_home_backups.results }}"
+      loop_control:
+        label: "{{ item.item.item.path | basename }}"
+
+    - name: Back up existing home dotfiles
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ workstation_home }}/{{ item.item.item.path | basename }}"
+          - "{{ workstation_home }}/.local/dotfile_backup/{{ item.item.item.path | basename }}"
+      when:
+        - item.item.stat.exists
+        - not (item.item.stat.islnk | default(false) and item.item.stat.lnk_source == item.item.item.path)
+      loop: "{{ dotfile_home_backups.results }}"
+      loop_control:
+        label: "{{ item.item.item.path | basename }}"
+
+    - name: Link files from the dotfile repository into the home directory
+      ansible.builtin.file:
+        src: "{{ item.path }}"
+        dest: "{{ workstation_home }}/{{ item.path | basename }}"
+        state: link
+      loop: "{{ dotfile_home_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Create the user configuration directory
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.config"
+        state: directory
+        mode: "0755"
+
+    - name: Find directories under dotfile .config
+      ansible.builtin.find:
+        paths: "{{ workstation_home }}/.local/myrepo/dotfile/.config"
+        file_type: directory
+        recurse: false
+        hidden: true
+      register: dotfile_config_directories
+
+    - name: Inspect existing user configuration directories
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.config/{{ item.path | basename }}"
+        follow: false
+      loop: "{{ dotfile_config_directories.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: dotfile_config_destinations
+
+    - name: Inspect backups for existing user configuration directories
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.local/dotfile_backup/{{ item.item.path | basename }}"
+        follow: false
+      loop: "{{ dotfile_config_destinations.results }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+      register: dotfile_config_backups
+
+    - name: Refuse to overwrite an existing user configuration backup
+      ansible.builtin.fail:
+        msg: >-
+          Cannot back up {{ workstation_home }}/.config/{{ item.item.item.path | basename }}:
+          {{ workstation_home }}/.local/dotfile_backup/{{ item.item.item.path | basename }}
+          already exists.
+      when:
+        - item.item.stat.exists
+        - not (item.item.stat.islnk | default(false) and item.item.stat.lnk_source == item.item.item.path)
+        - item.stat.exists
+      loop: "{{ dotfile_config_backups.results }}"
+      loop_control:
+        label: "{{ item.item.item.path | basename }}"
+
+    - name: Back up existing user configuration directories
+      ansible.builtin.command:
+        argv:
+          - mv
+          - "{{ workstation_home }}/.config/{{ item.item.item.path | basename }}"
+          - "{{ workstation_home }}/.local/dotfile_backup/{{ item.item.item.path | basename }}"
+      when:
+        - item.item.stat.exists
+        - not (item.item.stat.islnk | default(false) and item.item.stat.lnk_source == item.item.item.path)
+      loop: "{{ dotfile_config_backups.results }}"
+      loop_control:
+        label: "{{ item.item.item.path | basename }}"
+
+    - name: Link dotfile configuration directories into the user configuration directory
+      ansible.builtin.file:
+        src: "{{ item.path }}"
+        dest: "{{ workstation_home }}/.config/{{ item.path | basename }}"
+        state: link
+      loop: "{{ dotfile_config_directories.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    # Development environment and terminal: Rust and Node.js
+    - name: Check whether rustup is installed
+      ansible.builtin.stat:
+        path: "{{ workstation_home }}/.cargo/bin/rustup"
+      register: rustup_binary
+
+    - name: Download the official rustup installer
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --proto
+          - =https
+          - --tlsv1.2
+          - --fail
+          - --silent
+          - --show-error
+          - --output
+          - /tmp/rustup-init.sh
+          - https://sh.rustup.rs
+      when: not rustup_binary.stat.exists
+
+    - name: Install Rust with the official rustup installer
+      ansible.builtin.command:
+        argv:
+          - /bin/sh
+          - /tmp/rustup-init.sh
+          - -y
+      when: not rustup_binary.stat.exists
+
+    - name: Remove the rustup installer
+      ansible.builtin.file:
+        path: /tmp/rustup-init.sh
+        state: absent
+
+    - name: Install Node.js 24 and npm
+      become: true
+      ansible.builtin.dnf:
+        name: nodejs24-npm
+        state: present
+
+    # Development environment and terminal: Alacritty
+    - name: Install the Alacritty build dependencies
+      become: true
+      ansible.builtin.dnf:
+        name:
+          - cmake
+          - freetype-devel
+          - fontconfig-devel
+          - libxcb-devel
+          - libxkbcommon-devel
+          - g++
+        state: present
+
+    - name: Install Alacritty with Cargo
+      ansible.builtin.command:
+        argv:
+          - "{{ workstation_home }}/.cargo/bin/cargo"
+          - install
+          - alacritty
+        creates: "{{ workstation_home }}/.cargo/bin/alacritty"
+
+    - name: Create the user application directory for Alacritty
+      ansible.builtin.file:
+        path: "{{ workstation_home }}/.local/share/applications"
+        state: directory
+        mode: "0755"
+
+    - name: Add Alacritty to the GNOME application menu
+      ansible.builtin.copy:
+        dest: "{{ workstation_home }}/.local/share/applications/Alacritty.desktop"
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Type=Application
+          TryExec={{ workstation_home }}/.cargo/bin/alacritty
+          Exec={{ workstation_home }}/.cargo/bin/alacritty
+          Icon=utilities-terminal
+          Terminal=false
+          Categories=System;TerminalEmulator;
+
+          Name=Alacritty
+          GenericName=Terminal
+          Comment=A fast, cross-platform, OpenGL terminal emulator
+          StartupNotify=true
+          StartupWMClass=Alacritty
+          Actions=New;
+
+          [Desktop Action New]
+          Name=New Terminal
+          Exec={{ workstation_home }}/.cargo/bin/alacritty
+
+    - name: Install the cargo-update build dependency
+      become: true
+      ansible.builtin.dnf:
+        name: openssl-devel
+        state: present
+
+    - name: Install cargo-update with Cargo
+      ansible.builtin.command:
+        argv:
+          - "{{ workstation_home }}/.cargo/bin/cargo"
+          - install
+          - cargo-update
+        creates: "{{ workstation_home }}/.cargo/bin/cargo-install-update"
+
+    # Development environment and terminal: npm commands
+    - name: Check whether the OpenAI Codex npm package is installed globally
+      become: true
+      ansible.builtin.command:
+        argv:
+          - npm
+          - list
+          - --global
+          - --depth=0
+          - "@openai/codex"
+      register: codex_npm_package
+      changed_when: false
+      failed_when: false
+
+    - name: Install the OpenAI Codex npm package globally
+      become: true
+      ansible.builtin.command:
+        argv:
+          - npm
+          - install
+          - --global
+          - "@openai/codex"
+      when: codex_npm_package.rc != 0
+
+    - name: Check whether npm-check-updates is installed globally
+      become: true
+      ansible.builtin.command:
+        argv:
+          - npm
+          - list
+          - --global
+          - --depth=0
+          - npm-check-updates
+      register: npm_check_updates_package
+      changed_when: false
+      failed_when: false
+
+    - name: Install npm-check-updates globally
+      become: true
+      ansible.builtin.command:
+        argv:
+          - npm
+          - install
+          - --global
+          - npm-check-updates
+      when: npm_check_updates_package.rc != 0
+
+    # Virtualization environment
+    - name: Install Podman
+      become: true
+      ansible.builtin.dnf:
+        name: podman
+        state: present
+
+    - name: Check whether Virtual Machine Manager is installed
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - info
+          - --user
+          - org.virt_manager.virt-manager
+      register: virt_manager_flatpak_info
+      changed_when: false
+      failed_when: false
+
+    - name: Install Virtual Machine Manager from Flathub
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - install
+          - --user
+          - --noninteractive
+          - flathub
+          - org.virt_manager.virt-manager
+      when: virt_manager_flatpak_info.rc != 0
+
+    # Development environment: Visual Studio Code
+    - name: Download the Microsoft package signing key for Visual Studio Code
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --fail
+          - --silent
+          - --show-error
+          - --output
+          - /tmp/microsoft.asc
+          - https://packages.microsoft.com/keys/microsoft.asc
+      args:
+        creates: /tmp/microsoft.asc
+      changed_when: false
+
+    - name: Import the Microsoft package signing key for Visual Studio Code
+      become: true
+      ansible.builtin.rpm_key:
+        key: /tmp/microsoft.asc
+        state: present
+
+    - name: Add the official Visual Studio Code repository
+      become: true
+      ansible.builtin.yum_repository:
+        name: code
+        description: Visual Studio Code
+        baseurl: https://packages.microsoft.com/yumrepos/vscode
+        enabled: true
+        gpgcheck: true
+        gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+
+    - name: Install Visual Studio Code
+      become: true
+      ansible.builtin.dnf:
+        name: code
+        state: present
+        update_cache: true
+
+    - name: Remove the Microsoft package signing key download
+      ansible.builtin.file:
+        path: /tmp/microsoft.asc
+        state: absent
+      changed_when: false
+
+    # Desktop applications
+    - name: Read the installed desktop Flatpak applications
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - list
+          - --user
+          - --columns=application
+      register: installed_desktop_flatpaks
+      changed_when: false
+
+    - name: Install desktop applications from Flathub
+      ansible.builtin.command:
+        argv:
+          - flatpak
+          - install
+          - --user
+          - --noninteractive
+          - flathub
+          - "{{ item }}"
+      when: item not in installed_desktop_flatpaks.stdout_lines
+      loop:
+        - com.vivaldi.Vivaldi
+        - org.mozilla.thunderbird_esr
+        - md.obsidian.Obsidian
+        - com.discordapp.Discord
+        - com.obsproject.Studio
+        - com.obsproject.Studio.Plugin.SceneSwitcher
+        - org.videolan.VLC
+        - com.nextcloud.desktopclient.nextcloud
+        - com.bitwarden.desktop

@@ -1,9 +1,0 @@
-- hosts: localhost
-  tasks:
-  - name: install essential packages
-    become: yes
-    ansible.builtin.apt:
-      update_cache: yes
-      pkg:
-        - git
-        - vim

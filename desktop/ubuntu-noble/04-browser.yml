@@ -1,8 +1,0 @@
-- hosts: localhost
-  tasks:
-  - name: install Chromium
-    become: yes
-    ansible.builtin.apt:
-      update_cache: yes
-      pkg:
-        chromium-browser

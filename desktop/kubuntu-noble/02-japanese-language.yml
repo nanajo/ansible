@@ -1,9 +1,0 @@
-- hosts: localhost
-  tasks:
-    - name: Packages for Japanese Language
-      become: yes
-      ansible.builtin.apt:
-        update_cache: yes
-        pkg:
-          - firefox-locale-ja
-          - fcitx5-mozc
